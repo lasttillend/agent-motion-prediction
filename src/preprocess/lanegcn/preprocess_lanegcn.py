@@ -9,9 +9,9 @@ from torch.utils.data import DataLoader
 
 from l5kit.data import ChunkedDataset, LocalDataManager
 
-from preprocess.lanegcn.data_class.data import LyftDataset as Dataset, split_scenes, collate_fn, from_numpy, ref_copy
-from preprocess.lanegcn.map_class.lane_segment import LaneSegment
-from utils.gpu_utils import gpu
+from src.preprocess.lanegcn.data_class.data import LyftDataset as Dataset, split_scenes, collate_fn, from_numpy, ref_copy
+from src.preprocess.lanegcn.map_class.lane_segment import LaneSegment
+from src.preprocess.lanegcn.utils.gpu_utils import gpu
 
 # root directory to save the preprocssed data
 PREPROCESSED_ROOT = "/home/han/study/projects/agent-motion-prediction/data/preprocess/lanegcn/"

@@ -1,7 +1,7 @@
 import os
 import pickle
 from typing import List, Dict
-from preprocess.lanegcn.combine_preprocessed_data import read_all_preprocessed_data, combine_data
+from src.preprocess.lanegcn.combine_preprocessed_data import read_all_preprocessed_data, combine_data
 
 Element = Dict
 Data = List[Element]

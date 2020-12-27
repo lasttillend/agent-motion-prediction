@@ -2,10 +2,10 @@ from typing import List, Mapping, Tuple
 import numpy as np
 import os
 
-from preprocess.lanegcn.utils.json_utils import read_json_file
-from preprocess.lanegcn.utils.vector_map_loader import load_lane_segments_from_file
-from preprocess.lanegcn.utils.manhattan_search import find_all_polygon_bboxes_overlapping_query_bbox
-from preprocess.lanegcn.map_class.lane_segment import LaneSegment
+from src.preprocess.lanegcn.utils.json_utils import read_json_file
+from src.preprocess.lanegcn.utils.vector_map_loader import load_lane_segments_from_file
+from src.preprocess.lanegcn.utils.manhattan_search import find_all_polygon_bboxes_overlapping_query_bbox
+from src.preprocess.lanegcn.map_class.lane_segment import LaneSegment
 
 from l5kit.data import MapAPI
 from l5kit.data.proto.road_network_pb2 import MapElement

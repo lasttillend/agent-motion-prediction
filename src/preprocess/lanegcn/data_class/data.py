@@ -11,8 +11,8 @@ from scipy import sparse
 
 from l5kit.data import ChunkedDataset, LocalDataManager
 
-from preprocess.lanegcn.map_class.map import LyftMap
-from preprocess.lanegcn.map_class.lane_segment import LaneSegment
+from src.preprocess.lanegcn.map_class.map import LyftMap
+from src.preprocess.lanegcn.map_class.lane_segment import LaneSegment
 
 # set env variable for input data
 DATA_ROOT = "/home/han/study/projects/agent-motion-prediction/data/lyft_dataset_5sec_scene/"

@@ -9,7 +9,7 @@ import torch
 from torch import Tensor, nn
 from torch.nn import functional as F
 
-from preprocess.lanegcn.data_class.data import LyftDataset, collate_fn
+from src.preprocess.lanegcn.data_class.data import LyftDataset, collate_fn
 from layers import Conv1d, Res1d, Linear, LinearRes
 from utils import gpu, to_long, Optimizer, StepLR
 
@@ -23,8 +23,8 @@ model_name = os.path.basename(file_path).split(".")[0]
 ### config ###
 config = dict()
 """Train"""
-config["display_iters"] = 966  # display train loss every 0.1 epoch 
-config["val_iters"] = 966 * 5  # display validation loss every 0.5 epoch 
+config["display_iters"] = 966   # display train loss every 1% epoch 
+config["val_iters"] = 966 * 50  # display validation loss every 50% epoch 
 config["save_freq"] = 1.0
 config["epoch"] = 0
 config["horovod"] = True

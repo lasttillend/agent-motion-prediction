@@ -9,7 +9,7 @@ from l5kit.data.map_api import MapAPI
 from l5kit.rasterization.rasterizer_builder import _load_metadata
 from l5kit.geometry import geodetic_to_ecef, transform_point
 
-from preprocess.lanegcn.map_class.lane_segment import LaneSegment
+from src.preprocess.lanegcn.map_class.lane_segment import LaneSegment
 
 DATA_ROOT = "/home/han/study/projects/agent-motion-prediction/data/lyft_dataset/"
 os.environ["L5KIT_DATA_FOLDER"] = DATA_ROOT

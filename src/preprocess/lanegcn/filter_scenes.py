@@ -9,7 +9,7 @@
 import os
 import zarr
 
-from preprocess.lanegcn.filter_scenes_helper import find_invalid_scenes, filter_invalid_scenes
+from src.preprocess.lanegcn.filter_scenes_helper import find_invalid_scenes, filter_invalid_scenes
 
 print("Validate 5sec 0")
 DATA_ROOT = "/home/han/study/projects/agent-motion-prediction/data/lyft_dataset_5sec_scene/"
