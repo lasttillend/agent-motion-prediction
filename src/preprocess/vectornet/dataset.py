@@ -73,33 +73,30 @@ class LyftDataset(Dataset):
              
         cur_frame = history_frames[0]
         cur_agents = history_agents[0]
+        ego_position = cur_frame["ego_translation"][:2]  # (x, y) coordinate of the ego car in current frame, note this is in world coordinate
+        ego_yaw = rotation33_as_yaw(cur_frame["ego_rotation"])  # yaw in radian
+        # We define a new coordinate system called "vector coordinate system" where the origin is placed at ego car's current position and the x-axis is the moving direction of the ego car.
+        world_from_vector = calc_world_from_vector_matrix(ego_position, ego_yaw)
+        # vector_from_world = np.linalg.inv(world_from_vector)
+        ego_search_box = calc_ego_car_search_box(self.cfg["vector_params"]["vector_range"], self.cfg["vector_params"]["ego_center"])  # search bbox is aligned in the moving direction of ego car
         
-        ## 1. Find all map elements around the ego car (in history frames), which will be vectorized.
-        elements_need_vectorized = defaultdict(set)  # element type (str) -> a set of element ids (str)
+        ## 1. Find all map elements around the ego car in current frame, which will be vectorized.
+        elements_need_vectorized = defaultdict(list)  # element type (str) -> a list of element ids (str)
         element_types = ["lane"]
         all_types_elements = {element_type: self.map_api.get_elements_from_layer(element_type) for element_type in element_types}
-
-        for frame in tqdm(history_frames, desc="Find map elements needing vectorized"): 
-            ego_position = frame["ego_translation"][:2]  # (x, y) coordinate of the ego car in current frame, note this is in world coordinate
-            ego_yaw = rotation33_as_yaw(frame["ego_rotation"])  # yaw in radian
-            # We define a new coordinate system called "vector coordinate system" where the origin is placed at ego car's current position and the x-axis is the moving direction of the ego car.
-            world_from_vector = calc_world_from_vector_matrix(ego_position, ego_yaw)
-            # vector_from_world = np.linalg.inv(world_from_vector)
-            ego_search_box = calc_ego_car_search_box(self.cfg["vector_params"]["vector_range"], self.cfg["vector_params"]["ego_center"])  # search bbox is aligned in the moving direction of ego car
-
-            for element_type in element_types:
-                all_elements = all_types_elements[element_type]
-                for element in all_elements:
-                    element_id = self.map_api.id_as_str(element.id)
-                    element_bbox = self.map_api.get_bbox(element_type, element_id)  # [xmin, ymin, xmax, ymax] in world coordinate
-                    element_bbox_transformed = transform_bbox(element_bbox, world_from_vector)  # transform the bounding box to be aligned with the search box and change coordinate into agent coordinate
-                    if is_overlapping2D(ego_search_box, element_bbox_transformed) and element_id not in elements_need_vectorized[element_type]:
-                        elements_need_vectorized[element_type].add(element_id) 
+        for element_type in element_types:
+            all_elements = all_types_elements[element_type]
+            for element in all_elements:
+                element_id = self.map_api.id_as_str(element.id)
+                element_bbox = self.map_api.get_bbox(element_type, element_id)  # [xmin, ymin, xmax, ymax] in world coordinate
+                element_bbox_transformed = transform_bbox(element_bbox, world_from_vector)  # transform the bounding box to be aligned with the search box and change coordinate into vector coordinate
+                if is_overlapping2D(ego_search_box, element_bbox_transformed) and element_id not in elements_need_vectorized[element_type]:
+                    elements_need_vectorized[element_type].append(element_id) 
 
         ## 2. Find history trajectories for agents in the current frame, which will be vectorized as well.
         cur_agents_track_ids = cur_agents["track_id"]
         cur_agents_history_trajs = dict()  # track_id -> Tuple[history_trajs (np.ndarray of shape=[num_times, 2]), timestamps]
-        for agent_track_id in tqdm(cur_agents_track_ids, desc="Find agent history trajectories needing vectorized"):
+        for agent_track_id in cur_agents_track_ids:
             history_trajs = []
             timestamps = []
             for i in range(len(history_agents)):
@@ -117,7 +114,7 @@ class LyftDataset(Dataset):
 
         ## 3. Vectorize map elements to prepare for creating map features.
         map_vector_sets = defaultdict(list)  # element_type -> List[Polyline] 
-        for element_type, element_ids in tqdm(elements_need_vectorized.items(), desc="Vectorizing map element"):
+        for element_type, element_ids in elements_need_vectorized.items():
             # Transform to custom map element, which has a vectorize method.
             element_objs = []
             for element_id in element_ids:
@@ -134,13 +131,9 @@ class LyftDataset(Dataset):
 
                 map_vector_sets[element_type].extend(polylines) 
         
-        for k, v in map_vector_sets.items():
-            print(f"Number of {k} map elements vectorized: {len(v)}")
-            
-
         ## 4. Vectorize trajectories to prepare for creating trajectory features.
         trajs_vector_sets = []  # List[Polyline]
-        for agent_track_id, (history_trajs, timestamps) in tqdm(cur_agents_history_trajs.items(), desc="Vectorize trajectories"):
+        for agent_track_id, (history_trajs, timestamps) in cur_agents_history_trajs.items():
             lines = []
             for i in range(len(history_trajs) - 1):
                 start = history_trajs[i] 
@@ -153,7 +146,6 @@ class LyftDataset(Dataset):
             history_trajs_polyline = Polyline(lines, self.vectorizer.polyline_ids["trajectory"], "trajectory")
             self.vectorizer.polyline_ids["trajectory"] += 1
             trajs_vector_sets.append(history_trajs_polyline)
-        print(f"Number of agent history trajectories vectorized {len(trajs_vector_sets)}")
 
         ## 5. Find the position of the selected agent, and create agent coordinate system by setting this target agent's current position as origin, and current moving direction as x-axis.
 
@@ -162,7 +154,6 @@ class LyftDataset(Dataset):
         selected_track_id = track_id
         selected_agent = cur_agents[cur_agents["track_id"] == selected_track_id][0] 
         selected_agent_position = selected_agent["centroid"]
-        print(f"selected agent centroid: {selected_agent_position}")
         selected_agent_yaw = float(selected_agent["yaw"])
         selected_agent_extend = selected_agent["extent"]
 
@@ -174,7 +165,7 @@ class LyftDataset(Dataset):
         ## 6. Create map features and trajectory features. 
         # Map feature
         map_features = [] 
-        for element_type, element_polylines in tqdm(map_vector_sets.items(), desc="Creating map feature:"):
+        for element_type, element_polylines in map_vector_sets.items():
             for polyline in element_polylines:
                 vector_features = []
                 for vector in polyline:
@@ -194,7 +185,7 @@ class LyftDataset(Dataset):
 
         # Trajectory feature 
         trajs_features = [] 
-        for trajs_polyline in tqdm(trajs_vector_sets, desc="Creating trajectory feature:"):
+        for trajs_polyline in trajs_vector_sets:
             vector_features = []
             for vector in trajs_polyline:
                 start = vector.start
@@ -224,10 +215,6 @@ class LyftDataset(Dataset):
         data["centroid"] = selected_agent_position
         data["yaw"] = selected_agent_yaw
         data["extent"] = selected_agent_extend
-        
-        print("target positions shape:", future_positions_m.shape) 
-        print("target avails: ", np.sum(future_avaliabilities != 0))
-        print("target positions[:10]:", future_positions_m[:10, :])
         
         return data
             
@@ -281,24 +268,6 @@ def mask_agents(zarr_dataset: ChunkedDataset, history_num_frames: int, future_nu
     
     return agent_mask
     
-    
-def calc_bbox_of_trajectory(trajectory: np.ndarray) -> np.ndarray:
-    """
-    Calculate the bounding box of the given trajectory.
-    
-    Args:
-        trajectory: np.ndarray, shape = [num_points, 2]
-    
-    Returns:
-        bbox: np.ndarray, shape = [4, ]
-    """
-    xmin, ymin = min(trajectory[:, 0]), min(trajectory[:, 1])
-    xmax, ymax = max(trajectory[:, 0]), max(trajectory[:, 1])
-    
-    bbox = np.array([xmin, ymin, xmax, ymax])
-    
-    return bbox        
-
 def is_overlapping2D(box1: np.ndarray, box2: np.ndarray) -> bool:
     """
     Two axes aligned boxes (of any dimension) overlap if and only if the projections to all axes overlap. The projection to an axis is simply the coordinate range for that axis.
@@ -381,6 +350,8 @@ def rotate_point(point: np.ndarray, rotation_matrix: np.ndarray) -> np.ndarray:
 def transform_bbox(bbox: np.ndarray, world_from_vector: np.ndarray) -> np.ndarray:
     """
     Rotate the bounding box to be aligned with the ego car's search box and then change coordinate system from world into vector.
+
+    Note: the coordinate of bbox is in world coordinate system.
     
     Args:
         bbox (np.ndarray): [xmin, ymin, xmax, ymax]
@@ -389,24 +360,31 @@ def transform_bbox(bbox: np.ndarray, world_from_vector: np.ndarray) -> np.ndarra
     returns:
         (np.ndarray): [new_xmin, new_yim, new_xmax, new_ymax]
     """
-    # 1. Find the coordinates of 4 corners of bounding box
-    lower_left = np.array([bbox[0], bbox[1]])
-    lower_right = np.array([bbox[2], bbox[1]])
-    upper_right = np.array([bbox[2], bbox[3]])
-    upper_left = np.array([bbox[0], bbox[3]])
+    # 1. Find coordinates of the 4 corners of bounding box in its local coordinate system (origin at its center).
+    center_x = (bbox[0] + bbox[2]) / 2
+    center_y = (bbox[1] + bbox[3]) / 2
+    center = np.array([center_x, center_y])
+    lower_left = np.array([bbox[0], bbox[1]])  - center
+    lower_right = np.array([bbox[2], bbox[1]]) - center
+    upper_right = np.array([bbox[2], bbox[3]]) - center
+    upper_left = np.array([bbox[0], bbox[3]])  - center
     corners = [lower_left, lower_right, upper_right, upper_left]
     
-    # 2. Rotate the bounding box by rotating the 4 corners.
+    # 2. Rotate the bounding box around its center to align with the ego car's moving direction. 
     rot_corners = []
     rotation_matrix = world_from_vector[:2, :2]
     for point in corners:
         rot_point = rotate_point(point, rotation_matrix)
         rot_corners.append(rot_point)
-      
-    # 3. Transform the coordinates of these corners using the vector_from_world matrix.
+    rot_corners_np = np.array(rot_corners)
+    
+    # 3. Change back to world coordinate system by adding center.
+    rot_corners_np = rot_corners_np + center
+
+    # 4. Transform coordinates of these rotated corners to vector coordinate system.
     vector_from_world = np.linalg.inv(world_from_vector)
     new_corners = []
-    for rot_point in rot_corners:
+    for rot_point in rot_corners_np:
         new_point = transform_point(rot_point, vector_from_world)
         new_corners.append(new_point)
     new_corners_np = np.array(new_corners)
