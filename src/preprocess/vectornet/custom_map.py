@@ -1,13 +1,16 @@
 import copy
 import os
 import pickle
-from typing import List
+from typing import List, Tuple, Dict
 
 import numpy as np
 
 from l5kit.data.map_api import MapAPI
 from l5kit.data.proto.road_network_pb2 import MapElement, TrafficControlElement, LatLngBox
 from l5kit.geometry import geodetic_to_ecef, transform_point
+
+MAP_ELEMENTS = ["lane"]  # currently considered
+MAP_FILES_ROOT = "/home/han/study/projects/agent-motion-prediction/src/preprocess/vectornet/map_elements"
 
 class CustomMapAPI(MapAPI):
     
@@ -128,22 +131,73 @@ class CustomMapAPI(MapAPI):
         else:
             raise ValueError(f"Finding {element_type}'s bounding box has not been defined!")
         return bbox
+    
+    def get_sorted_lane_bbox(self) -> Tuple[Tuple, Tuple, Tuple, Tuple]:
+        """
+        Lane bboxes are sorted according to xmin/xmax, ymin/ymax.
+        """
+        all_lanes = self.get_elements_from_layer("lane")
+        bboxes, ids = [], []
+        for lane in all_lanes:
+            lane_id = self.id_as_str(lane.id)
+            lane_bbox = self.get_bbox("lane", lane_id)
+            bboxes.append(lane_bbox)
+            ids.append(lane_id)
+        bboxes_np = np.array(bboxes)
+        bboxes_xmin = bboxes_np[:, 0]
+        bboxes_ymin = bboxes_np[:, 1]
+        bboxes_xmax = bboxes_np[:, 2]
+        bboxes_ymax = bboxes_np[:, 3]
+    
+        xmin_idx = np.argsort(bboxes_xmin)
+        sorted_bboxes_xmin = list(bboxes_xmin[xmin_idx])
+        sorted_xmin_element_ids = list(np.array(ids)[xmin_idx])
 
-    def get_bbox(self, element_type: str, element_id: str) -> np.ndarray:
-        if element_type == "lane":
-            bbox = self._get_lane_bbox(element_id)
-        elif element_type in ["crosswalk", "parking_zone", "traffic_light"]:
-            bbox = self._get_traffic_element_bbox(element_id)
-        elif element_type == "junction":
-            bbox = self._get_junction_bbox(element_id)
-        else:
-            raise ValueError(f"Finding {element_type}'s bounding box has not been defined!")
-        return bbox
+        xmax_idx = np.argsort(bboxes_xmax)
+        sorted_bboxes_xmax = list(bboxes_xmax[xmax_idx])
+        sorted_xmax_element_ids = list(np.array(ids)[xmax_idx])
 
+        ymin_idx = np.argsort(bboxes_ymin)
+        sorted_bboxes_ymin = list(bboxes_ymin[ymin_idx])
+        sorted_ymin_element_ids = list(np.array(ids)[ymin_idx])
+       
+        ymax_idx = np.argsort(bboxes_ymax)
+        sorted_bboxes_ymax = list(bboxes_ymax[ymax_idx])
+        sorted_ymax_element_ids = list(np.array(ids)[ymax_idx])
+
+        sorted_bbox_and_ids_pairs = (
+                                        (sorted_bboxes_xmin, sorted_xmin_element_ids),
+                                        (sorted_bboxes_xmax, sorted_xmax_element_ids),
+                                        (sorted_bboxes_ymin, sorted_ymin_element_ids),
+                                        (sorted_bboxes_ymax, sorted_ymax_element_ids),
+                                    )
+
+        return sorted_bbox_and_ids_pairs 
+    
+    def save_all_sorted_bbox(self) -> None:
+        sorted_map_element_bboxes = dict()
+        for element_type in MAP_ELEMENTS:
+            if element_type == "lane":
+                sorted_bbox_and_ids_pairs = self.get_sorted_lane_bbox()
+            else:
+                raise ValueError(f"Map element {element_type} has not been defined!")
+            sorted_map_element_bboxes[element_type] = sorted_bbox_and_ids_pairs
+        
+        output_path = os.path.join(MAP_FILES_ROOT, "sorted_bboxes.p")
+        with open(output_path, "wb") as f:
+            pickle.dump(sorted_map_element_bboxes, f)
+
+    def build_sorted_element_bboxes(self) -> Dict[str, Tuple[Tuple, Tuple, Tuple, Tuple]]:
+        sorted_bbox_path = os.path.join(MAP_FILES_ROOT, "sorted_bboxes.p")
+        with open(sorted_bbox_path, "rb") as f:
+            sorted_map_element_bboxes = pickle.load(f)
+    
+        return sorted_map_element_bboxes 
+        
     def save_elements_bbox(self, layer_name: str, output_path: str) -> None:
         if layer_name == "lane":
             all_lanes = self.get_elements_from_layer("lane")
-            output = dict()  # lane_id -> np.ndarray of shape = [xmin, ymin, xmax, ymax]
+            output = dict()  # lane_id -> np.ndarray [xmin, ymin, xmax, ymax]
             for lane in all_lanes:
                 lane_id = self.id_as_str(lane.id)
                 lane_bbox = self.get_bbox("lane", lane_id)

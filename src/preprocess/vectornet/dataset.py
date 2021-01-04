@@ -31,6 +31,7 @@ class LyftDataset(Dataset):
         self.dataset = zarr_dataset
         self.map_api = map_api
         self.vectorizer = vectorizer
+        self.map_element_types = ["lane"]
 
         self.history_num_frames = self.cfg["model_params"]["history_num_frames"]
         self.future_num_frames = self.cfg["model_params"]["future_num_frames"]
@@ -39,6 +40,21 @@ class LyftDataset(Dataset):
         agents_mask = mask_agents(self.dataset, self.history_num_frames, self.future_num_frames)
         self.agents_indices = np.nonzero(agents_mask)[0]
         
+
+        # Load all sorted bounding boxes (xmin, xmax, ymin, ymax) of each map element.
+        """
+        sorted_map_element_bboxes is a Dict[str, Tuple], more specifically, 
+        element type  --> 4 sorted bboxes xy values, and corresponding element ids, i.e.,
+        ( 
+            (sorted_bbox_xmin, corresponding element ids),
+            (sorted_bbox_xmax, corresponding element ids),
+            (sorted_bbox_ymin, corresponding element ids),
+            (sorted_bbox_ymax, corresponding element ids)
+        )
+        Each sorted_bbox is a List[float], and corresponding element ids is a List[str]  
+        """
+        self.sorted_map_element_bboxes = self.map_api.build_sorted_element_bboxes()
+
         self.cumulative_sizes = self.dataset.scenes["frame_index_interval"][:, 1]
         self.cumulative_sizes_agents = self.dataset.frames["agent_index_interval"][:, 1]
         
@@ -75,24 +91,45 @@ class LyftDataset(Dataset):
         cur_agents = history_agents[0]
         ego_position = cur_frame["ego_translation"][:2]  # (x, y) coordinate of the ego car in current frame, note this is in world coordinate
         ego_yaw = rotation33_as_yaw(cur_frame["ego_rotation"])  # yaw in radian
-        # We define a new coordinate system called "vector coordinate system" where the origin is placed at ego car's current position and the x-axis is the moving direction of the ego car.
-        world_from_vector = calc_world_from_vector_matrix(ego_position, ego_yaw)
-        # vector_from_world = np.linalg.inv(world_from_vector)
-        ego_search_box = calc_ego_car_search_box(self.cfg["vector_params"]["vector_range"], self.cfg["vector_params"]["ego_center"])  # search bbox is aligned in the moving direction of ego car
+        # We define a new coordinate system called "ego coordinate system" where the origin is placed at ego car's current position and the x-axis is the moving direction of the ego car.
+        world_from_ego = calc_world_from_ego_matrix(ego_position, ego_yaw)
+        # ego_from_world = np.linalg.inv(world_from_ego)
+        ego_search_box = calc_ego_car_search_box(world_from_ego, self.cfg["vector_params"]["xy_range"], self.cfg["vector_params"]["ego_center"])  # search bbox is aligned in the moving direction of ego car
         
         ## 1. Find all map elements around the ego car in current frame, which will be vectorized.
         elements_need_vectorized = defaultdict(list)  # element type (str) -> a list of element ids (str)
-        element_types = ["lane"]
-        all_types_elements = {element_type: self.map_api.get_elements_from_layer(element_type) for element_type in element_types}
-        for element_type in element_types:
-            all_elements = all_types_elements[element_type]
-            for element in all_elements:
-                element_id = self.map_api.id_as_str(element.id)
-                element_bbox = self.map_api.get_bbox(element_type, element_id)  # [xmin, ymin, xmax, ymax] in world coordinate
-                element_bbox_transformed = transform_bbox(element_bbox, world_from_vector)  # transform the bounding box to be aligned with the search box and change coordinate into vector coordinate
-                if is_overlapping2D(ego_search_box, element_bbox_transformed) and element_id not in elements_need_vectorized[element_type]:
-                    elements_need_vectorized[element_type].append(element_id) 
-
+        for element_type in self.map_element_types:
+            (
+                sorted_bbox_xmin_and_ids_pair,
+                sorted_bbox_xmax_and_ids_pair,
+                sorted_bbox_ymin_and_ids_pair,
+                sorted_bbox_ymax_and_ids_pair,
+            ) = self.sorted_map_element_bboxes[element_type]
+            search_xmin, search_ymin, search_xmax, search_ymax = ego_search_box
+            
+            # Check x values in search range.
+            xval_interval = [search_xmin, search_xmax]
+            sorted_bbox_xmax, xmax_ids = sorted_bbox_xmax_and_ids_pair
+            xleft = bisect.bisect_left(sorted_bbox_xmax, xval_interval[0])
+            left_deleted = xmax_ids[xleft:]
+            
+            sorted_bbox_xmin, xmin_ids = sorted_bbox_xmin_and_ids_pair
+            xright = bisect.bisect_right(sorted_bbox_xmin, xval_interval[1])
+            right_deleted = xmin_ids[:xright]
+            
+            # Check y values in search range.
+            yval_interval = [search_ymin, search_ymax]
+            sorted_bbox_ymax, ymax_ids = sorted_bbox_ymax_and_ids_pair
+            ylower = bisect.bisect_left(sorted_bbox_ymax, yval_interval[0])
+            lower_deleted = ymax_ids[ylower:]
+            
+            sorted_bbox_ymin, ymin_ids = sorted_bbox_ymin_and_ids_pair
+            yupper = bisect.bisect_right(sorted_bbox_ymin, yval_interval[1])
+            upper_deleted = ymin_ids[:yupper]
+            
+            valid_element_ids = list(set(left_deleted) & set(right_deleted) & set(lower_deleted) & set(upper_deleted))
+            elements_need_vectorized[element_type] = valid_element_ids        
+                
         ## 2. Find history trajectories for agents in the current frame, which will be vectorized as well.
         cur_agents_track_ids = cur_agents["track_id"]
         cur_agents_history_trajs = dict()  # track_id -> Tuple[history_trajs (np.ndarray of shape=[num_times, 2]), timestamps]
@@ -291,16 +328,16 @@ def is_overlapping1D(interval1: np.ndarray, interval2: np.ndarray) -> bool:
 
     return xmax1 >= xmin2 and xmax2 >= xmin1 
 
-def calc_world_from_vector_matrix(ego_position: np.ndarray, ego_yaw: float) -> np.ndarray:
+def calc_world_from_ego_matrix(ego_position: np.ndarray, ego_yaw: float) -> np.ndarray:
     """
-    Return the ego car's pose as a 3x3 matrix. This corresponds to world_from_vector matrix.
+    Return the ego car's pose as a 3x3 matrix. This corresponds to world_from_ego matrix.
     
     Args:
         ego_position (np.ndarray): 2D coordinates of the ego car
         ego_yaw (float): yaw of the ego car
     
     Returns:
-        (np.ndarray): 3x3 world_from_vector matrix
+        (np.ndarray): 3x3 world_from_ego matrix
     """
     return np.array(
         [
@@ -310,14 +347,36 @@ def calc_world_from_vector_matrix(ego_position: np.ndarray, ego_yaw: float) -> n
         ]
     )
 
-def calc_ego_car_search_box(vector_range: List[int], ego_center: List[float]) -> np.ndarray:
-    xmin = -ego_center[0] * vector_range[0]
-    ymin = -ego_center[1] * vector_range[1]
-    xmax = (1 - ego_center[0]) * vector_range[0]
-    ymax = (1 - ego_center[1]) * vector_range[1]
-
-    search_box = np.array([xmin, ymin, xmax, ymax])
-    return search_box
+def calc_ego_car_search_box(world_from_ego: np.ndarray, xy_range: List[int], ego_center: List[float]) -> np.ndarray:
+    """
+    We first find the local coordinates of the four corners of search box, i.e., in ego coordinate system which is centered around ego car with xy range given by xy_range list, and aligned to the moving direction of ego car.
+    Then transform these 4 corner coordinates into world coordinate system and find min/max of x/y, i.e., the bounding box of the search box.
+    """ 
+    # Find search box in ego coordinate system.
+    xmin = -ego_center[0] * xy_range[0]
+    ymin = -ego_center[1] * xy_range[1]
+    xmax = (1 - ego_center[0]) * xy_range[0]
+    ymax = (1 - ego_center[1]) * xy_range[1]
+    lower_left = np.array([xmin, ymin])
+    lower_right = np.array([xmax, ymin])
+    upper_right = np.array([xmax, ymax])
+    upper_left = np.array([xmin, ymax])
+    corners = [lower_left, lower_right, upper_right, upper_left]
+    
+    # Transform coordinates of the corners into world coordinate system.  
+    new_corners = []
+    for corner in corners:
+        new_corner = transform_point(corner, world_from_ego)
+        new_corners.append(new_corner)
+    new_corners_np = np.array(new_corners)    
+    
+    # Calculate min/max values of new x/y.
+    new_x_min = np.min(new_corners_np[:, 0])
+    new_y_min = np.min(new_corners_np[:, 1])
+    new_x_max = np.max(new_corners_np[:, 0])
+    new_y_max = np.max(new_corners_np[:, 1])
+    
+    return np.array([new_x_min, new_y_min, new_x_max, new_y_max])
 
 def transform_point(point: np.ndarray, transformation_matrix: np.ndarray) -> np.ndarray:
     """
@@ -325,7 +384,7 @@ def transform_point(point: np.ndarray, transformation_matrix: np.ndarray) -> np.
     
     Args:
         point (np.ndarray): [x, y]
-        transformation_matrix (np.ndarray): 3x3 matrix, coordinate change matrix, e.g., world_from_vector.
+        transformation_matrix (np.ndarray): 3x3 matrix, coordinate change matrix, e.g., world_from_ego.
 
     Returns:
         (np.ndarray): [new_x, new_y]
@@ -347,7 +406,7 @@ def rotate_point(point: np.ndarray, rotation_matrix: np.ndarray) -> np.ndarray:
     point = point.reshape(-1, 1)  # column vector
     return (rotation_matrix @ point).flatten()
 
-def transform_bbox(bbox: np.ndarray, world_from_vector: np.ndarray) -> np.ndarray:
+def transform_bbox(bbox: np.ndarray, world_from_ego: np.ndarray) -> np.ndarray:
     """
     Rotate the bounding box to be aligned with the ego car's search box and then change coordinate system from world into vector.
 
@@ -355,7 +414,7 @@ def transform_bbox(bbox: np.ndarray, world_from_vector: np.ndarray) -> np.ndarra
     
     Args:
         bbox (np.ndarray): [xmin, ymin, xmax, ymax]
-        world_from_vector (np.ndarray): 3x3 coordinate change matrix
+        world_from_ego (np.ndarray): 3x3 coordinate change matrix
 
     returns:
         (np.ndarray): [new_xmin, new_yim, new_xmax, new_ymax]
@@ -372,7 +431,7 @@ def transform_bbox(bbox: np.ndarray, world_from_vector: np.ndarray) -> np.ndarra
     
     # 2. Rotate the bounding box around its center to align with the ego car's moving direction. 
     rot_corners = []
-    rotation_matrix = world_from_vector[:2, :2]
+    rotation_matrix = world_from_ego[:2, :2]
     for point in corners:
         rot_point = rotate_point(point, rotation_matrix)
         rot_corners.append(rot_point)
@@ -382,10 +441,10 @@ def transform_bbox(bbox: np.ndarray, world_from_vector: np.ndarray) -> np.ndarra
     rot_corners_np = rot_corners_np + center
 
     # 4. Transform coordinates of these rotated corners to vector coordinate system.
-    vector_from_world = np.linalg.inv(world_from_vector)
+    ego_from_world = np.linalg.inv(world_from_ego)
     new_corners = []
     for rot_point in rot_corners_np:
-        new_point = transform_point(rot_point, vector_from_world)
+        new_point = transform_point(rot_point, ego_from_world)
         new_corners.append(new_point)
     new_corners_np = np.array(new_corners)
 
@@ -407,6 +466,6 @@ def calc_world_from_agent_matrix(agent_position: np.ndarray, agent_raw: float) -
         ego_yaw (float): yaw of the ego car
     
     Returns:
-        (np.ndarray): 3x3 world_from_vector matrix
+        (np.ndarray): 3x3 world_from_ego matrix
     """
-    return calc_world_from_vector_matrix(agent_position, agent_raw) 
+    return calc_world_from_ego_matrix(agent_position, agent_raw) 
