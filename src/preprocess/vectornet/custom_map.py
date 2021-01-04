@@ -4,6 +4,7 @@ import pickle
 from typing import List, Tuple, Dict
 
 import numpy as np
+from scipy.interpolate import splprep, splev, interp1d
 
 from l5kit.data.map_api import MapAPI
 from l5kit.data.proto.road_network_pb2 import MapElement, TrafficControlElement, LatLngBox
@@ -238,6 +239,34 @@ class CustomMapAPI(MapAPI):
         os.makedirs(output_root, exist_ok=True)
         with open(output_path, "wb") as f:
             pickle.dump(output, f)
+
+    def interpolate_points_on_boundary(self, boundary: np.ndarray, num_points=40) -> np.ndarray:
+        if len(boundary) == 2:
+            # Linear interpolation
+            f = interp1d(boundary[:, 0], boundary[:, 1])
+            u_new = np.linspace(np.min(boundary[:, 0]), np.max(boundary[:, 0]), num_points)
+            new_points =[u_new, f(u_new)]        
+        if len(boundary) == 3:
+            # Interpolate using spline with k=2.
+            tck, u = splprep([boundary[:, 0], boundary[:, 1]], k=2)
+            u_new = np.linspace(u.min(), u.max(), num_points)
+            new_points = splev(u_new, tck)      
+        elif len(boundary) > 3:
+            # Interpolate using spline with default k=3.
+            tck, u = splprep([boundary[:, 0], boundary[:, 1]])
+            u_new = np.linspace(u.min(), u.max(), num_points)
+            new_points = splev(u_new, tck)  
+            return np.c_[new_points[0], new_points[1]]
+
+    def interpolate_points_on_lane_boundaries(self, lane_id: str, num_points=40) -> Tuple[np.ndarray, np.ndarray]:
+        boundries = self.get_lane_coords(lane_id)
+        left_boundary = boundries["xyz_left"][:, :2]
+        right_boundary = boundries["xyz_right"][:, :2]
+        
+        new_left_boundary = self.interpolate_points_on_boundary(left_boundary, num_points)
+        new_right_boundary = self.interpolate_points_on_boundary(right_boundary, num_points)
+        
+        return (new_left_boundary, new_right_boundary)
 
     ######## Privater method ########
     def _element_of_type(self, elem: MapElement, layer_name: str) -> bool:
