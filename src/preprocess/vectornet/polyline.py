@@ -25,6 +25,14 @@ class Vector:
     @property
     def attributes(self) -> dict:
         return self._attr
+    
+    @property
+    def ids(self) -> int:
+        return self._idx
+
+    @property
+    def object_type(self) -> str:
+        return self._attr["OBJECT_TYPE"]
         
 class Polyline:
 
@@ -32,6 +40,18 @@ class Polyline:
         self._lines = copy.deepcopy(lines)
         self._idx = idx
         self._element_type_name = element_type_name
+        self.is_padded = 0  # defualt is not padded
 
     def __iter__(self):
         return iter(self._lines)
+    
+    def __len__(self):
+        return len(self._lines)
+
+    @property
+    def ids(self) -> int:
+        return self._idx
+
+    @property
+    def object_type(self) -> str:
+        return self._element_type_name

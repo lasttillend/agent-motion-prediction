@@ -256,7 +256,7 @@ class CustomMapAPI(MapAPI):
             tck, u = splprep([boundary[:, 0], boundary[:, 1]])
             u_new = np.linspace(u.min(), u.max(), num_points)
             new_points = splev(u_new, tck)  
-            return np.c_[new_points[0], new_points[1]]
+        return np.c_[new_points[0], new_points[1]]
 
     def interpolate_points_on_lane_boundaries(self, lane_id: str, num_points=40) -> Tuple[np.ndarray, np.ndarray]:
         boundries = self.get_lane_coords(lane_id)

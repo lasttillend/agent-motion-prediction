@@ -12,17 +12,18 @@ class Lane(CustomMapElement):
         assert self.is_lane(element), "This is not a lane element!"
         self._element = element
         self.element_type = "lane"
+        self.num_points = 40
     
     def vectorize(self, map_api: CustomMapAPI, polyline_id: int) -> List[Polyline]:
         lane_id = map_api.id_as_str(self._element.id)
         bd_coords = map_api.get_lane_coords(lane_id)
-        left_bd = bd_coords["xyz_left"][:, :2]  # xy coords of left boundary
-        right_bd = bd_coords["xyz_right"][:, :2]  # xy coords of right boundary
-
+        # Interpolate points on lane boundaries to have same number of vectors.
+        new_left_bd, new_right_bd = map_api.interpolate_points_on_lane_boundaries(lane_id, self.num_points)
+        
         # Vectorize left boundary.
         lines = []
-        for i in range(len(left_bd) - 1):   # number of vectors in a polyline = number of boundary points - 1
-            start, end = left_bd[i], left_bd[i + 1]
+        for i in range(len(new_left_bd) - 1):   # number of vectors in a polyline = number of boundary points - 1
+            start, end = new_left_bd[i], new_left_bd[i + 1]
             attr = self.get_attributes()
             idx = polyline_id
             vector = Vector(start, end, attr, idx)
@@ -32,8 +33,8 @@ class Lane(CustomMapElement):
 
         # Vectorize right boundary.
         lines = []
-        for i in range(len(right_bd) - 1):
-            start, end = right_bd[i], right_bd[i + 1]
+        for i in range(len(new_right_bd) - 1):
+            start, end = new_right_bd[i], new_right_bd[i + 1]
             attr = self.get_attributes()
             idx = polyline_id
             vector = Vector(start, end, attr, idx)
