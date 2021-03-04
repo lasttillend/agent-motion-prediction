@@ -31,3 +31,4 @@ class GraphAttentionNet(nn.Module):
         attention = F.softmax(query_result, dim=1)
         output = attention.mm(p_value)
         return output + p_query
+

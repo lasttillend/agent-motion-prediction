@@ -2,6 +2,9 @@ import copy
 from typing import List, Optional
 
 import numpy as np
+import torch
+
+polyline_colors = dict(trajectory="#CCFFE5", lane="#000000")
 
 class Vector:
     
@@ -55,3 +58,30 @@ class Polyline:
     @property
     def object_type(self) -> str:
         return self._element_type_name
+
+    def to_numpy(self) -> np.ndarray:
+        vector_features = [] 
+        for vector in self:
+            start = vector.start
+            end = vector.end
+            attributes = list(vector.attributes.values())
+            vector_feature = np.r_[start, end, attributes]
+            vector_features.append(vector_feature)
+        return np.array(vector_features, dtype=np.float)
+
+    def to_tensor(self) -> torch.tensor:
+        vector_features_np = self.to_numpy()
+        return torch.from_numpy(vector_features_np)
+
+    def draw(self, ax) -> None:
+        vectors = self.to_numpy()[:, :4]  # [xmin, ymin, xmax, ymax] 
+        for vector in vectors:
+            dx = vector[2] - vector[0]
+            dy = vector[3] - vector[1]
+            ax.arrow(vector[0], vector[1], dx, dy, color=polyline_colors[self._element_type_name], length_includes_head=True, head_width=0.5, head_length=0.3)
+
+
+
+
+
+

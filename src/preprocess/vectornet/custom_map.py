@@ -10,7 +10,6 @@ from l5kit.data.map_api import MapAPI
 from l5kit.data.proto.road_network_pb2 import MapElement, TrafficControlElement, LatLngBox
 from l5kit.geometry import geodetic_to_ecef, transform_point
 
-MAP_ELEMENTS = ["lane"]  # currently considered
 MAP_FILES_ROOT = "/home/han/study/projects/agent-motion-prediction/src/preprocess/vectornet/map_elements"
 
 class CustomMapAPI(MapAPI):
@@ -175,9 +174,9 @@ class CustomMapAPI(MapAPI):
 
         return sorted_bbox_and_ids_pairs 
     
-    def save_all_sorted_bbox(self) -> None:
+    def save_all_sorted_bbox(self, map_element_types: List[str]) -> None:
         sorted_map_element_bboxes = dict()
-        for element_type in MAP_ELEMENTS:
+        for element_type in map_element_types:
             if element_type == "lane":
                 sorted_bbox_and_ids_pairs = self.get_sorted_lane_bbox()
             else:
